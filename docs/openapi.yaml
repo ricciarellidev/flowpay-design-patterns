@@ -1,0 +1,334 @@
+openapi: 3.1.0
+info:
+  title: FlowPay Reference API
+  version: 1.0.0
+  summary: A local, simulated payment-authorization workflow
+  description: |
+    Educational implementation. AsterPay is fictional and performs no external
+    payment operation. There is no authentication, tenant isolation or durable
+    storage. Use synthetic data and do not expose this service publicly.
+
+    Idempotency applies to one running process and is lost on restart. Business
+    validation precedes key lookup. Changed valid payloads conflict; invalid
+    payloads are rejected by validation first. Both APPROVED and DECLINED are
+    successfully created authorization receipts, not settled payments.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://localhost:8080
+    description: Local development only
+tags:
+  - name: Payments
+    description: Simulated authorization receipts
+paths:
+  /api/v1/payments:
+    post:
+      operationId: authorizePayment
+      tags: [Payments]
+      summary: Authorize a simulated payment, or replay its existing receipt
+      description: |
+        For a new key, reserves the key and authorizes the request through its
+        processor. For the same key and equivalent valid payload, returns the
+        original receipt without invoking the provider again. Amounts with
+        equivalent decimal values share a fingerprint. Currency is normalized
+        to upper case. An absent or empty optional token/description has the
+        same fingerprint; description changes are otherwise significant.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+            examples:
+              pix:
+                summary: PIX authorization in BRL
+                value:
+                  customerId: customer_demo
+                  amount: 125.90
+                  currency: BRL
+                  method: PIX
+              card:
+                summary: Tokenized card authorization
+                value:
+                  customerId: customer_demo
+                  amount: 49.90
+                  currency: USD
+                  method: CREDIT_CARD
+                  paymentInstrumentToken: tok_approved
+                  description: Demonstration order
+              decline:
+                summary: Deterministic provider-decline fixture
+                value:
+                  customerId: customer_demo
+                  amount: 49.90
+                  currency: USD
+                  method: CREDIT_CARD
+                  paymentInstrumentToken: tok_declined
+      responses:
+        '201':
+          description: New simulated authorization receipt, either APPROVED or DECLINED
+          headers:
+            Location:
+              description: Relative URI of the created receipt
+              schema:
+                type: string
+                example: /api/v1/payments/57d154c5-4d23-419c-9bc1-333224635d10
+            Idempotent-Replayed:
+              description: False for a new receipt
+              schema:
+                type: string
+                const: 'false'
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '200':
+          description: Existing receipt replayed for the same key and equivalent valid payload
+          headers:
+            Idempotent-Replayed:
+              description: True when the original receipt is returned
+              schema:
+                type: string
+                const: 'true'
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '409':
+          description: A retained idempotency key was used with a different valid payload
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: urn:flowpay:problem:idempotency-conflict
+                title: Conflict
+                status: 409
+                detail: The idempotency key has already been used with a different request.
+                instance: /api/v1/payments
+                code: IDEMPOTENCY_CONFLICT
+                correlationId: local_demo_001
+        '422':
+          description: Request format is valid, but a business rule rejected the payment
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: urn:flowpay:problem:pix-requires-brl
+                title: Unprocessable Content
+                status: 422
+                detail: PIX payments require BRL currency.
+                instance: /api/v1/payments
+                code: PIX_REQUIRES_BRL
+                correlationId: local_demo_001
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/payments/{id}:
+    get:
+      operationId: getPayment
+      tags: [Payments]
+      summary: Retrieve an authorization receipt from the running process
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Authorization receipt found
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          description: No receipt exists with that ID in the running process
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/ServerError'
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Opaque key scoped to this single process, not to an authenticated tenant.
+        Retained until restart, without TTL or a capacity limit in this version.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{8,64}$'
+        minLength: 8
+        maxLength: 64
+        example: order_demo_001
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: |
+        An incoming value matching the allowlist is echoed. Any other value,
+        including an absent value, is replaced with a generated UUID.
+      schema:
+        type: string
+        example: local_demo_001
+  headers:
+    CorrelationId:
+      description: Safe request trace identifier, generated when needed
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._-]{1,100}$'
+  responses:
+    InvalidRequest:
+      description: Invalid JSON, field, header, currency code or path parameter
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ServerError:
+      description: Unexpected failure; internal details are not exposed
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    PaymentMethod:
+      type: string
+      enum: [PIX, CREDIT_CARD, BANK_TRANSFER]
+    PaymentStatus:
+      type: string
+      enum: [APPROVED, DECLINED]
+    PaymentRequest:
+      type: object
+      required: [customerId, amount, currency, method]
+      properties:
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 80
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: Synthetic merchant-side customer identifier
+        amount:
+          type: number
+          minimum: 0.01
+          maximum: 999999999999.99
+          multipleOf: 0.01
+          description: |
+            Decimal monetary amount with no more than two fractional digits.
+            Default business maximum is 100000.00, configurable through
+            FLOWPAY_MAX_AMOUNT. HTTP precision validation precedes this limit.
+        currency:
+          type: string
+          pattern: '^[A-Za-z]{3}$'
+          description: |
+            Valid ISO 4217 code, normalized to upper case. BRL, USD and EUR are
+            enabled; other recognized codes are rejected by a business rule.
+            Unrecognized codes are invalid HTTP input. PIX requires BRL.
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+        paymentInstrumentToken:
+          type: [string, 'null']
+          maxLength: 120
+          description: |
+            Optional except for CREDIT_CARD, where it must match
+            tok_[A-Za-z0-9_-]{1,116}. Use fictional fixtures only, never card
+            numbers. tok_declined simulates a provider decline.
+        description:
+          type: [string, 'null']
+          maxLength: 200
+          description: Optional synthetic order description; included in the fingerprint
+    PaymentResponse:
+      type: object
+      required: [id, customerId, amount, currency, method, status, providerReference, processedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+          enum: [BRL, USD, EUR]
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        providerReference:
+          type: string
+          description: Fictional authorization reference; not a transaction on a payment network
+        processedAt:
+          type: string
+          format: date-time
+          description: UTC processing timestamp, unchanged on replay
+    Problem:
+      type: object
+      description: RFC 9457 Problem Detail plus application-specific code and trace ID
+      required: [type, title, status, detail, instance, code, correlationId]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          type: string
+          description: Stable application error identifier
+        correlationId:
+          type: string
+        violations:
+          type: array
+          description: Present for Bean Validation field errors; values are not echoed
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string

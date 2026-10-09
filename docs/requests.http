@@ -1,0 +1,75 @@
+@baseUrl = http://localhost:8080
+
+### Authorize a PIX payment. Repeat unchanged to observe a 200 replay.
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+Idempotency-Key: demo_pix_001
+X-Correlation-Id: demo_request_001
+
+{
+  "customerId": "customer_42",
+  "amount": 125.90,
+  "currency": "BRL",
+  "method": "PIX",
+  "description": "Order 1042"
+}
+
+### Same key with changed payload -> 409
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+Idempotency-Key: demo_pix_001
+
+{
+  "customerId": "customer_42",
+  "amount": 126.00,
+  "currency": "BRL",
+  "method": "PIX",
+  "description": "Order 1042"
+}
+
+### Tokenized card authorization
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+Idempotency-Key: demo_card_001
+
+{
+  "customerId": "customer_42",
+  "amount": 49.95,
+  "currency": "USD",
+  "method": "CREDIT_CARD",
+  "paymentInstrumentToken": "tok_approved"
+}
+
+### Deterministic simulated decline; creates a DECLINED receipt, not an HTTP error
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+Idempotency-Key: demo_card_decline
+
+{
+  "customerId": "customer_42",
+  "amount": 49.95,
+  "currency": "USD",
+  "method": "CREDIT_CARD",
+  "paymentInstrumentToken": "tok_declined"
+}
+
+### PIX requires BRL -> 422
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+Idempotency-Key: demo_invalid_pix
+
+{
+  "customerId": "customer_42",
+  "amount": 10.00,
+  "currency": "USD",
+  "method": "PIX"
+}
+
+### Replace the UUID below with the ID returned by POST
+GET {{baseUrl}}/api/v1/payments/00000000-0000-0000-0000-000000000000
+
+### Health
+GET {{baseUrl}}/actuator/health
+
+### Handled-payment request counter, including replays
+GET {{baseUrl}}/actuator/metrics/flowpay.payments.processed

@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.png binary
+*.jar binary
+# Preserve the official Windows wrapper's CRLF bytes in the source archive and Git.
+*.cmd -text

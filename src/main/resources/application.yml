@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: flowpay
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  address: 127.0.0.1
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+info:
+  app:
+    name: FlowPay
+    description: Payment orchestration reference API
+    version: "1.0.0"
+
+flowpay:
+  max-amount: ${FLOWPAY_MAX_AMOUNT:100000.00}
+  supported-currencies:
+    - BRL
+    - USD
+    - EUR
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{correlationId:-no-correlation}] %logger{36} - %msg%n"
+
